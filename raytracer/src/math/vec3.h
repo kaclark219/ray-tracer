@@ -40,13 +40,13 @@ class Vec3 {
         }
 
         // add two vectors
-        Vec3 add(const Vec3 &v) const {
-            return Vec3(x + v.x, y + v.y, z + v.z);
+        Vec3 add(const Vec3 v1, const Vec3 v2) const {
+            return Vec3(v1.x + v2.x, v1.y + v2.y, v1.z + v2.z);
         }
 
         // subtract two vectors
-        Vec3 subtract(const Vec3 &v) const {
-            return Vec3(x - v.x, y - v.y, z - v.z);
+        Vec3 subtract(const Vec3 v1, const Vec3 v2) const {
+            return Vec3(v1.x - v2.x, v1.y - v2.y, v1.z - v2.z);
         }
 
         // normalize the vector

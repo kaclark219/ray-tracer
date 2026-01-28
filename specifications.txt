@@ -26,3 +26,10 @@ scene information:
     - camera
         - position: (0.033089, 0.765843, -0.331214)
         - lookat: (0.033089, 0.765843, -1.331214)
+
+
+to run from ray-tracer directory:
+    - rm -rf raytracer/build
+    - cmake -S raytracer -B raytracer/build -DCMAKE_BUILD_TYPE=Release
+    - cmake --build raytracer/build -j
+    - ./raytracer/build/raytracer
