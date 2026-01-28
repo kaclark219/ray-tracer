@@ -1,7 +1,7 @@
 #include <cstdlib>
 
-int run_render_cpu();
+int renderCPU();
 
 int main() {
-	return run_render_cpu();
+	return renderCPU();
 }
