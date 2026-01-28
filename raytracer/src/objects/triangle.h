@@ -42,8 +42,8 @@ class Triangle : public Object {
                 points[2].getZ() - points[0].getZ()
             );
 
-            Vec3 h = ray.getDirection().cross(ray.getDirection(), edge2);
-            float a = edge1.dot(edge1, h);
+            Vec3 h = ray.getDirection().cross(edge2);
+            float a = edge1.dot(h);
             if (a > -EPSILON && a < EPSILON)
                 return false;
 
@@ -53,16 +53,16 @@ class Triangle : public Object {
                 ray.getOrigin().getY() - points[0].getY(),
                 ray.getOrigin().getZ() - points[0].getZ()
             );
-            float u = f * s.dot(s, h);
+            float u = f * s.dot(h);
             if (u < 0.0f || u > 1.0f)
                 return false;
 
-            Vec3 q = s.cross(s, edge1);
-            float v = f * ray.getDirection().dot(ray.getDirection(), q);
+            Vec3 q = s.cross(edge1);
+            float v = f * ray.getDirection().dot(q);
             if (v < 0.0f || u + v > 1.0f)
                 return false;
 
-            t = f * edge2.dot(edge2, q);
+            t = f * edge2.dot(q);
             if (t > EPSILON)
                 return true;
             else
@@ -80,7 +80,7 @@ class Triangle : public Object {
                 points[2].getY() - points[0].getY(),
                 points[2].getZ() - points[0].getZ()
             );
-            return edge1.cross(edge1, edge2);
+            return edge1.cross(edge2);
         }
 };
 

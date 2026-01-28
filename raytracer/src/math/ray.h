@@ -1,6 +1,12 @@
 #ifndef RAYTRACER_RAY_H
 #define RAYTRACER_RAY_H
 
+#ifdef __CUDACC__
+    #define CUDA_CALLABLE __host__ __device__
+#else
+    #define CUDA_CALLABLE
+#endif
+
 #include "vec3.h"
 #include "point.h"
 
@@ -11,21 +17,25 @@ class Ray {
     
     public:
         // default constructor
-        Ray() : origin(Point()), direction(Vec3(0, 0, 1)) {}
+        CUDA_CALLABLE Ray() : origin(Point()), direction(Vec3(0, 0, 1)) {}
 
         // two parameter constructor
-        Ray(const Point &orig, const Vec3 &dir) : origin(orig), direction(dir) {}
+        CUDA_CALLABLE Ray(const Point &orig, const Vec3 &dir)
+            : origin(orig), direction(dir) {}
 
         // copy constructor
-        Ray(const Ray &r) : origin(r.origin), direction(r.direction) {}
+        CUDA_CALLABLE Ray(const Ray &r)
+            : origin(r.origin), direction(r.direction) {}
 
         // getters
-        Point getOrigin() const { return origin; }
-        Vec3 getDirection() const { return direction; }
+        CUDA_CALLABLE Point getOrigin() const { return origin; }
+        CUDA_CALLABLE Vec3 getDirection() const { return direction; }
 
         // setters
-        void setOrigin(const Point &orig) { origin = orig; }
-        void setDirection(const Vec3 &dir) { direction = dir; }
+        CUDA_CALLABLE void setOrigin(const Point &orig) { origin = orig; }
+        CUDA_CALLABLE void setDirection(const Vec3 &dir) { direction = dir; }
 };
 
-#endif // RAYTRACER_RAY_h
+#undef CUDA_CALLABLE
+
+#endif // RAYTRACER_RAY_H
