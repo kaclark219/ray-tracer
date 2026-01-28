@@ -1,17 +1,18 @@
 #include "image/image.h"
-#include "objects/sphere.h"
-#include "objects/triangle.h"
-#include "object.h"
+#include "math/vec3.h"
 #include "camera.h"
 #include "math/point.h"
-#include "math/vec3.h"
+#include "math/ray.h"
+#include "object.h"
+#include "objects/sphere.h"
+#include "objects/triangle.h"
 
+// each object is heap allocated & stored in a vector
 #include <memory>
 #include <vector>
 #include <string>
 #include <cmath>
 #include <limits>
-
 using std::vector;
 using std::unique_ptr;
 using std::make_unique;
@@ -22,9 +23,10 @@ const int H = 600;
 const float FOV_DEG = 90.0f;
 
 // helper functions
+// change of basis into camera space
 static inline Point worldToCam(const Point& P, const Point& cam_pos, const Vec3& right, const Vec3& up, const Vec3& forward) {
     Vec3 v(P.getX() - cam_pos.getX(), P.getY() - cam_pos.getY(), P.getZ() - cam_pos.getZ());
-    return Point(v.dot(v, right), v.dot(v, up), v.dot(v, forward));
+    return Point(v.dot(right), v.dot(up), v.dot(forward));
 }
 
 // main render function
@@ -41,9 +43,9 @@ int renderCPU() {
     Vec3 forward(cam_look.getX() - cam_pos.getX(), cam_look.getY() - cam_pos.getY(), cam_look.getZ() - cam_pos.getZ());
     forward.normalize();
     Vec3 world_up(0.0f, 1.0f, 0.0f);
-    Vec3 right = right.cross(forward, world_up);
+    Vec3 right = forward.cross(world_up);
     right.normalize();
-    Vec3 up = up.cross(right, forward);
+    Vec3 up = right.cross(forward);
     up.normalize();
 
     // build scene in world coords

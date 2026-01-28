@@ -54,17 +54,17 @@ class Vec3 {
         }
 
         // cross product
-        Vec3 cross(const Vec3 v1, const Vec3 v2) const {
+        Vec3 cross(const Vec3& other) const {
             return Vec3(
-                v1.y * v2.z - v1.z * v2.y,
-                v1.z * v2.x - v1.x * v2.z,
-                v1.x * v2.y - v1.y * v2.x
+                y * other.z - z * other.y,
+                z * other.x - x * other.z,
+                x * other.y - y * other.x
             );
         }
 
         // dot product
-        float dot(const Vec3 v1, const Vec3 v2) const {
-            return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+        float dot(const Vec3& other) const {
+            return x * other.x + y * other.y + z * other.z;
         }
 
         // length of the vector
