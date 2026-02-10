@@ -15,6 +15,7 @@ notes for building k-d trees:
         - will be one of four cases for interior nodes
     - TA-B algorithm makes use of coordinates for entry, exit, & the plane intersection point of axis to traverse the tree efficiently
     - add code to measure the runtime of building the k-d tree & the ray tracing process with & without the k-d tree to show the improvement
+    - tinyobjloader for reading in .obj files to get triangle meshes
 */
 
 // to kick things off:
