@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include "../math/color.h"
+#include "../components/color.h"
 
 class Image {
     private:

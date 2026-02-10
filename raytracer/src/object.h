@@ -1,10 +1,10 @@
 #ifndef RAYTRACER_OBJECT_H
 #define RAYTRACER_OBJECT_H
 
-#include "math/point.h"
-#include "math/vec3.h"
-#include "math/color.h"
-#include "math/ray.h"
+#include "components/point.h"
+#include "components/vec3.h"
+#include "components/color.h"
+#include "components/ray.h"
 
 class Object {
     protected:

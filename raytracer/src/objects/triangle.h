@@ -2,9 +2,9 @@
 #define RAYTRACER_TRIANGLE_H
 
 #include "../object.h"
-#include "../math/point.h"
-#include "../math/vec3.h"
-#include "../math/ray.h"
+#include "../components/point.h"
+#include "../components/vec3.h"
+#include "../components/ray.h"
 
 #ifdef __CUDACC__
     #define CUDA_CALLABLE __host__ __device__

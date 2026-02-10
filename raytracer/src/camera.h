@@ -1,8 +1,8 @@
 #ifndef RAYTRACER_CAMERA_H
 #define RAYTRACER_CAMERA_H
 
-#include "math/vec3.h"
-#include "math/point.h"
+#include "components/vec3.h"
+#include "components/point.h"
 
 #ifndef CUDA_CALLABLE
     #ifdef __CUDACC__
