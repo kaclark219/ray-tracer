@@ -12,6 +12,7 @@
 #include "objects/sphere.h"
 #include "objects/triangle.h"
 #include "textures/checkerboard.h"
+#include "textures/noise.h"
 
 // each object is heap allocated & stored in a vector
 #include <memory>
@@ -75,6 +76,9 @@ int renderCPU() {
 
     // create checkerboard texture for floor
     CheckerboardTexture checkerboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
+
+    // create perlin noise texture for floor
+    // NoiseTexture noiseTexture(2.0f, Color(0, 0, 0), Color(255, 255, 255));
 
     // build scene in world coords
     // sphere #1
