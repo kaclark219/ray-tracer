@@ -69,6 +69,18 @@ class Sphere : public Object {
             Vec3 n(p.getX() - center.getX(), p.getY() - center.getY(), p.getZ() - center.getZ());
             return n; // Vec3 normalizes
         }
+
+        // compute UV coordinates from surface point (spherical mapping)
+        Point getUV(const Point& p) const {
+            Vec3 normal = Vec3(p.getX() - center.getX(), p.getY() - center.getY(), p.getZ() - center.getZ());
+            normal.normalize();
+            
+            // spherical UV mapping
+            float u = std::atan2(normal.getZ(), normal.getX()) / (2.0f * 3.14159265358979323846f) + 0.5f;
+            float v = std::acos(std::max(-1.0f, std::min(1.0f, normal.getY()))) / 3.14159265358979323846f;
+            
+            return Point(u, v, 0.0f);
+        }
 };
 
 // cuda version

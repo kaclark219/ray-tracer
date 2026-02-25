@@ -15,11 +15,12 @@ struct IntersectData {
     Point hit_point; // point of intersection
     Vec3 normal; // surface normal at hit point
     Vec3 incoming; // direction of incoming ray
+    Point uv_coords; // UV texture coordinates
     float t; // distance along ray to hit point
     const Object* object; // pointer to intersected object (includes material info)
     bool hit; // did intersection occur
 
-    CUDA_CALLABLE IntersectData() : hit_point(Point()), normal(Vec3()), incoming(Vec3()), t(0), object(nullptr), hit(false) {}
+    CUDA_CALLABLE IntersectData() : hit_point(Point()), normal(Vec3()), incoming(Vec3()), uv_coords(Point(0, 0, 0)), t(0), object(nullptr), hit(false) {}
 };
 
 #endif // INTERSECT_DATA_H

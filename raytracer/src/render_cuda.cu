@@ -11,6 +11,7 @@
 #include "components/ray.h"
 #include "components/light.h"
 #include "components/intersect_data.h"
+#include "textures/checkerboard.h"
 
 #include <cmath>
 #include <limits>
@@ -46,6 +47,7 @@ __global__ void renderKernel(Color* fb, int w, int h, float aspect, float scale,
     const TriangleGPU* tris, int nTris,
     const Material* materials, int numMaterials,
     const LightData* lights, int numLights,
+    const CheckerboardTextureData* floorTexture,
     Color ambientLight, Color background) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -169,7 +171,14 @@ __global__ void renderKernel(Color* fb, int w, int h, float aspect, float scale,
         float specularFactor = (RdotV > 0.0f) ? powf(RdotV, materials[matIndex].getShininess()) : 0.0f;
 
         Color lightColor = lights[li].color * lights[li].intensity;
-        result = result + (materials[matIndex].getDiffuse() * lightColor * NdotL);
+        
+        // Sample texture for floor (matIndex == 2)
+        Color diffuseColor = materials[matIndex].getDiffuse();
+        if (matIndex == 2 && floorTexture != nullptr) {
+            diffuseColor = sampleCheckerboardGPU(*floorTexture, hit_point);
+        }
+        
+        result = result + (diffuseColor * lightColor * NdotL);
         result = result + (materials[matIndex].getSpecular() * lightColor * specularFactor);
     }
 
@@ -236,19 +245,16 @@ int renderCUDA() {
     hMats[2] = Material(Color(20, 0, 0), Color(150, 0, 0), Color(10, 10, 10), 5.0f, 0.0f);
 
     // lights
-    LightData hLights[2];
+    LightData hLights[1];
     hLights[0] = LightData(
         worldToCam(Point(0.262f, 2.8f, -1.2f), cam_pos, right, up, forward),
         Color(255, 255, 255),
         0.9f
     );
-    // secondary light: yellow, between camera and spheres
-    hLights[1] = LightData(
-        worldToCam(Point(0.262f, 0.9f, -0.8f), cam_pos, right, up, forward),
-        Color(255, 220, 80),
-        1.0f
-    );
     Color ambientLight(15, 15, 15);
+
+    // create checkerboard texture for floor
+    CheckerboardTextureData hCheckboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
 
     // host gpu-scene arrays
     SphereGPU hSpheres[2];
@@ -281,6 +287,7 @@ int renderCUDA() {
     TriangleGPU* dTris = nullptr;
     Material* dMats = nullptr;
     LightData* dLights = nullptr;
+    CheckerboardTextureData* dCheckboard = nullptr;
 
     size_t fbBytes = (size_t)W * (size_t)H * sizeof(Color);
 
@@ -288,12 +295,14 @@ int renderCUDA() {
     CUDA_CHECK(cudaMalloc(&dSpheres, 2 * sizeof(SphereGPU)));
     CUDA_CHECK(cudaMalloc(&dTris, 2 * sizeof(TriangleGPU)));
     CUDA_CHECK(cudaMalloc(&dMats, 3 * sizeof(Material)));
-    CUDA_CHECK(cudaMalloc(&dLights, 2 * sizeof(LightData)));
+    CUDA_CHECK(cudaMalloc(&dLights, 1 * sizeof(LightData)));
+    CUDA_CHECK(cudaMalloc(&dCheckboard, sizeof(CheckerboardTextureData)));
 
     CUDA_CHECK(cudaMemcpy(dSpheres, hSpheres, 2 * sizeof(SphereGPU), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(dTris, hTris, 2 * sizeof(TriangleGPU), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(dMats, hMats, 3 * sizeof(Material), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(dLights, hLights, 2 * sizeof(LightData), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dLights, hLights, 1 * sizeof(LightData), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(dCheckboard, &hCheckboard, sizeof(CheckerboardTextureData), cudaMemcpyHostToDevice));
 
     // launch kernel
     dim3 block(16, 16);
@@ -303,7 +312,8 @@ int renderCUDA() {
     renderKernel<<<grid, block>>>(dFB, W, H, aspect, scale,
         dSpheres, 2, dTris, 2,
         dMats, 3,
-        dLights, 2,
+        dLights, 1,
+        dCheckboard,
         ambientLight, bg);
 
     CUDA_CHECK(cudaGetLastError());
@@ -319,6 +329,7 @@ int renderCUDA() {
     CUDA_CHECK(cudaFree(dTris));
     CUDA_CHECK(cudaFree(dMats));
     CUDA_CHECK(cudaFree(dLights));
+    CUDA_CHECK(cudaFree(dCheckboard));
 
     // write to image class
     Image img(W, H, bg);

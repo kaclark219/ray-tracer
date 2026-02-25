@@ -5,6 +5,7 @@
 #include "light.h"
 #include "material.h"
 #include "object.h"
+#include "../textures/texture.h"
 #include <vector>
 #include <memory>
 #include <cmath>
@@ -24,7 +25,7 @@ class Illumination {
         // virtual method to compute illumination
         virtual Color illuminate(const IntersectData& data, const std::vector<std::unique_ptr<Light>>& lights,
             const std::vector<std::unique_ptr<Object>>& objects,
-            const Material& material, const Vec3& view_dir) const = 0;
+            const Material& material, const Vec3& view_dir, const Texture* texture = nullptr) const = 0;
 };
 
 class PhongIllumination : public Illumination {
@@ -37,7 +38,16 @@ class PhongIllumination : public Illumination {
 
         Color illuminate(const IntersectData& data, const std::vector<std::unique_ptr<Light>>& lights,
             const std::vector<std::unique_ptr<Object>>& objects,
-            const Material& material, const Vec3& view_dir) const override {
+            const Material& material, const Vec3& view_dir, const Texture* texture = nullptr) const override {
+            
+            // sample texture if available & get diffuse color
+            Color diffuseColor = material.getDiffuse();
+            if (texture != nullptr) {
+                Color textureSample = texture->sample(data.hit_point, Point(0, 0, 0), data.normal);
+                // use texture color directly
+                diffuseColor = textureSample;
+            }
+            
             Color result = material.getAmbient() * ambientLight;
             // compute diffuse and specular contributions from each light
             for (const auto& light : lights) {
@@ -72,7 +82,7 @@ class PhongIllumination : public Illumination {
                 float RdotV = std::max(R.dot(view_dir), 0.0f);
                 float specularFactor = std::pow(RdotV, material.getShininess());
                 Color lightColor = light->getColor() * light->getIntensity();
-                result = result + (material.getDiffuse() * lightColor * NdotL);
+                result = result + (diffuseColor * lightColor * NdotL); // diffuse contribution
                 result = result + (material.getSpecular() * lightColor * specularFactor);
             }
             result.clamp(); // make sure color values are within valid range
@@ -100,6 +110,8 @@ CUDA_CALLABLE inline Color computePhongIllumination(
     const LightData* lights,
     int numLights
 ) {
+    Color diffuseColor = material.getDiffuse();
+    
     Color result = material.getAmbient() * ambientLight;
     for (int i = 0; i < numLights; i++) {
         Vec3 L = lights[i].position - hit_point;
@@ -120,7 +132,49 @@ CUDA_CALLABLE inline Color computePhongIllumination(
             #endif
         }
         Color lightColor = lights[i].color * lights[i].intensity;
-        result = result + (material.getDiffuse() * lightColor * NdotL);
+        result = result + (diffuseColor * lightColor * NdotL);
+        result = result + (material.getSpecular() * lightColor * specularFactor);
+    }
+    result.clamp();
+    return result;
+}
+
+CUDA_CALLABLE inline Color computePhongIlluminationWithTexture(
+    const Point& hit_point,
+    const Vec3& normal,
+    const Vec3& view_dir,
+    const Material& material,
+    const Color& ambientLight,
+    const LightData* lights,
+    int numLights,
+    const TextureData* texture,
+    Color sampledTexture
+) {
+    // sample texture and modulate diffuse color
+    // For procedural textures, use the sampled color directly
+    Color diffuseColor = sampledTexture;
+    
+    Color result = material.getAmbient() * ambientLight;
+    for (int i = 0; i < numLights; i++) {
+        Vec3 L = lights[i].position - hit_point;
+        L.normalize();
+        Vec3 N = normal;
+        float NdotL = N.dot(L);
+        if (NdotL < 0.0f) NdotL = 0.0f;
+        Vec3 R = (N * (2.0f * NdotL)) - L;
+        R.normalize();
+        float RdotV = R.dot(view_dir);
+        if (RdotV < 0.0f) RdotV = 0.0f;
+        float specularFactor = 1.0f;
+        if (RdotV > 0.0f) {
+            #ifdef __CUDACC__
+                specularFactor = powf(RdotV, material.getShininess());
+            #else
+                specularFactor = std::pow(RdotV, material.getShininess());
+            #endif
+        }
+        Color lightColor = lights[i].color * lights[i].intensity;
+        result = result + (diffuseColor * lightColor * NdotL);
         result = result + (material.getSpecular() * lightColor * specularFactor);
     }
     result.clamp();

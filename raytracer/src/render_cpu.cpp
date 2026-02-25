@@ -11,6 +11,7 @@
 #include "object.h"
 #include "objects/sphere.h"
 #include "objects/triangle.h"
+#include "textures/checkerboard.h"
 
 // each object is heap allocated & stored in a vector
 #include <memory>
@@ -72,6 +73,9 @@ int renderCPU() {
     // create illumination model
     PhongIllumination phong(world.getAmbientLight());
 
+    // create checkerboard texture for floor
+    CheckerboardTexture checkerboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
+
     // build scene in world coords
     // sphere #1
     Point s1c_world(0.498855f, 0.393785f, -1.932619f);
@@ -113,9 +117,11 @@ int renderCPU() {
 
     auto t1 = make_unique<Triangle>(f00_cam, f10_cam, f11_cam);
     t1->setMaterial(matRed);
+    t1->setTexture(&checkerboard);
     scene_cam.push_back(std::move(t1));
     auto t2 = make_unique<Triangle>(f00_cam, f11_cam, f01_cam);
     t2->setMaterial(matRed);
+    t2->setTexture(&checkerboard);
     scene_cam.push_back(std::move(t2));
 
     // prep img with sky blue background
@@ -183,8 +189,14 @@ int renderCPU() {
                         data.object = obj_hit;
                         data.hit = true;
                         
+                        // compute uv coordinates if this is a sphere
+                        const Sphere* sphere = dynamic_cast<const Sphere*>(obj_hit);
+                        if (sphere) {
+                            data.uv_coords = sphere->getUV(hit_point);
+                        }
+                        
                         // compute illumination using phong model (w/shadows)
-                        sampleColor = phong.illuminate(data, world.getLights(), scene_cam, obj_hit->getMaterial(), view_dir);
+                        sampleColor = phong.illuminate(data, world.getLights(), scene_cam, obj_hit->getMaterial(), view_dir, obj_hit->getTexture());
                     }
 
                     accumR += sampleColor.r;
