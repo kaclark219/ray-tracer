@@ -28,12 +28,101 @@ using std::make_unique;
 const int W = 800;
 const int H = 600;
 const float FOV_DEG = 90.0f;
+const int MAX_DEPTH = 3;
 
 // helper functions
 // change of basis into camera space
 static inline Point worldToCam(const Point& P, const Point& cam_pos, const Vec3& right, const Vec3& up, const Vec3& forward) {
     Vec3 v(P.getX() - cam_pos.getX(), P.getY() - cam_pos.getY(), P.getZ() - cam_pos.getZ());
     return Point(v.dot(right), v.dot(up), v.dot(forward));
+}
+
+static Color traceRay(
+    const Ray& ray,
+    int depth,
+    const PhongIllumination& phong,
+    const std::vector<std::unique_ptr<Light>>& lights,
+    const std::vector<std::unique_ptr<Object>>& objects,
+    const Color& backgroundColor
+) {
+    if (depth >= MAX_DEPTH) {
+        return Color(0, 0, 0);
+    }
+
+    float nearest = std::numeric_limits<float>::infinity();
+    Object* obj_hit = nullptr;
+    for (const auto& obj : objects) {
+        float t;
+        if (obj->intersect(ray, t) && t < nearest) {
+            nearest = t;
+            obj_hit = obj.get();
+        }
+    }
+
+    if (!obj_hit) {
+        return backgroundColor;
+    }
+
+    Vec3 ray_dir = ray.getDirection();
+
+    Point hit_point(
+        ray.getOrigin().getX() + nearest * ray_dir.getX(),
+        ray.getOrigin().getY() + nearest * ray_dir.getY(),
+        ray.getOrigin().getZ() + nearest * ray_dir.getZ()
+    );
+
+    Vec3 normal = obj_hit->normal(hit_point);
+    normal.normalize();
+
+    Vec3 view_dir = ray_dir * -1.0f;
+    view_dir.normalize();
+
+    IntersectData data;
+    data.hit_point = hit_point;
+    data.normal = normal;
+    data.incoming = ray_dir;
+    data.t = nearest;
+    data.object = obj_hit;
+    data.hit = true;
+
+    const Sphere* sphere = dynamic_cast<const Sphere*>(obj_hit);
+    if (sphere) {
+        data.uv_coords = sphere->getUV(hit_point);
+    }
+
+    Color localColor = phong.computeLocalIllumination(
+        data,
+        lights,
+        objects,
+        obj_hit->getMaterial(),
+        view_dir,
+        obj_hit->getTexture()
+    );
+
+    float kr = obj_hit->getMaterial().getReflectivity();
+    if (kr > 0.0f && depth < MAX_DEPTH) {
+        Vec3 I = ray_dir;
+        I.normalize();
+        float dotIN = I.dot(normal);
+
+        Vec3 reflect_dir = I - (normal * (2.0f * dotIN));
+        reflect_dir.normalize();
+
+        const float EPS = 1e-4f;
+        float offsetSign = (reflect_dir.dot(normal) >= 0.0f) ? 1.0f : -1.0f;
+        Point reflect_origin(
+            hit_point.getX() + normal.getX() * EPS * offsetSign,
+            hit_point.getY() + normal.getY() * EPS * offsetSign,
+            hit_point.getZ() + normal.getZ() * EPS * offsetSign
+        );
+
+        Ray reflectedRay(reflect_origin, reflect_dir);
+        Color reflectedColor = traceRay(reflectedRay, depth + 1, phong, lights, objects, backgroundColor);
+        localColor = localColor + (reflectedColor * kr);
+    }
+
+    localColor.clamp();
+    return localColor;
 }
 
 // main render function
@@ -56,17 +145,17 @@ int renderCPU() {
     up.normalize();
 
     // create materials
-    Material matYellow(Color(20, 20, 0), Color(150, 150, 0), Color(30, 30, 30), 20.0f, 0.0f); // matte yellow sphere
-    Material matGrey(Color(40, 40, 40), Color(190, 190, 190), Color(130, 130, 130), 50.0f, 0.0f); // shiny grey sphere
+    Material matMatte = Material::Matte();     // back sphere
+    Material matMirror = Material::Mirror();   // front sphere
     Material matRed(Color(20, 0, 0), Color(150, 0, 0), Color(10, 10, 10), 5.0f, 0.0f); // matte red floor
 
     // create world and add lights
     World world;
-    world.setAmbientLight(Color(15, 15, 15)); // ambient light
+    world.setAmbientLight(Color(25, 25, 25)); // ambient light
     
     // light modified from specifications.txt to be more visible in render
     world.addLight(make_unique<PointLight>(
-        worldToCam(Point(0.262f, 2.8f, -1.2f), cam_pos, right, up, forward), // light position in camera space
+        worldToCam(Point(0.10f, 2.2f, -0.9f), cam_pos, right, up, forward), // light position in camera space
         Color(255, 255, 255), // white light
         0.9f // intensity
     ));
@@ -76,9 +165,6 @@ int renderCPU() {
 
     // create checkerboard texture for floor
     CheckerboardTexture checkerboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
-
-    // create perlin noise texture for floor
-    // NoiseTexture noiseTexture(2.0f, Color(0, 0, 0), Color(255, 255, 255));
 
     // build scene in world coords
     // sphere #1
@@ -105,12 +191,12 @@ int renderCPU() {
     // transform centers to camera space
     Point s1c_cam = worldToCam(s1c_world, cam_pos, right, up, forward);
     auto sphere1 = make_unique<Sphere>(s1c_cam, s1r);
-    sphere1->setMaterial(matYellow);
+    sphere1->setMaterial(matMatte);
     scene_cam.push_back(std::move(sphere1));
 
     Point s2c_cam = worldToCam(s2c_world, cam_pos, right, up, forward);
     auto sphere2 = make_unique<Sphere>(s2c_cam, s2r);
-    sphere2->setMaterial(matGrey);
+    sphere2->setMaterial(matMirror);
     scene_cam.push_back(std::move(sphere2));
 
     // transform vertices to camera space
@@ -157,51 +243,7 @@ int renderCPU() {
 
                     Vec3 ray_dir(px, py, 1.0f);
                     Ray ray(ray_origin, ray_dir);
-
-                    float nearest = std::numeric_limits<float>::infinity();
-                    Object* obj_hit = nullptr;
-
-                    for (const auto& obj : scene_cam) {
-                        float t;
-                        if (obj->intersect(ray, t) && t < nearest) {
-                            nearest = t;
-                            obj_hit = obj.get();
-                        }
-                    }
-
-                    Color sampleColor = Color(135, 206, 235);
-                    if (obj_hit) {
-                        // compute hit point and normal
-                        Point hit_point(
-                            ray_origin.getX() + nearest * ray_dir.getX(),
-                            ray_origin.getY() + nearest * ray_dir.getY(),
-                            ray_origin.getZ() + nearest * ray_dir.getZ()
-                        );
-                        Vec3 normal = obj_hit->normal(hit_point);
-                        normal.normalize();
-                        
-                        // view direction (from hit point toward camera)
-                        Vec3 view_dir = ray_dir * -1.0f;
-                        view_dir.normalize();
-                        
-                        // create intersection data
-                        IntersectData data;
-                        data.hit_point = hit_point;
-                        data.normal = normal;
-                        data.incoming = ray_dir;
-                        data.t = nearest;
-                        data.object = obj_hit;
-                        data.hit = true;
-                        
-                        // compute uv coordinates if this is a sphere
-                        const Sphere* sphere = dynamic_cast<const Sphere*>(obj_hit);
-                        if (sphere) {
-                            data.uv_coords = sphere->getUV(hit_point);
-                        }
-                        
-                        // compute illumination using phong model (w/shadows)
-                        sampleColor = phong.illuminate(data, world.getLights(), scene_cam, obj_hit->getMaterial(), view_dir, obj_hit->getTexture());
-                    }
+                    Color sampleColor = traceRay(ray, 1, phong, world.getLights(), scene_cam, Color(135, 206, 235));
 
                     accumR += sampleColor.r;
                     accumG += sampleColor.g;
