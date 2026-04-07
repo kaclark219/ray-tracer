@@ -32,21 +32,27 @@ class Illumination {
 class PhongIllumination : public Illumination {
     private:
         Color ambientLight; // global ambient light color/intensity
+
+        Color combineWithReflection(const Color& localColor, const Material& material, const Color& reflectedColor) const {
+            Color result = localColor + (reflectedColor * material.getReflectivity());
+            result.clamp();
+            return result;
+        }
     
     public:
         // constructor with ambient light
         PhongIllumination(const Color& ambient = Color(50, 50, 50)) : ambientLight(ambient) {}
 
-        Color illuminate(const IntersectData& data, const std::vector<std::unique_ptr<Light>>& lights,
+        Color computeLocalIllumination(const IntersectData& data, const std::vector<std::unique_ptr<Light>>& lights,
             const std::vector<std::unique_ptr<Object>>& objects,
-            const Material& material, const Vec3& view_dir, const Texture* texture = nullptr) const override {
+            const Material& material, const Vec3& view_dir, const Texture* texture = nullptr) const {
             
             // sample texture if available & get diffuse color
             Color diffuseColor = material.getDiffuse();
             Vec3 effectiveNormal = data.normal; // may be perturbed by bump mapping
             
             if (texture != nullptr) {
-                Color textureSample = texture->sample(data.hit_point, Point(0, 0, 0), data.normal);
+                Color textureSample = texture->sample(data.hit_point, data.uv_coords, data.normal);
                 // use texture color directly
                 diffuseColor = textureSample;
                 
@@ -85,6 +91,9 @@ class PhongIllumination : public Illumination {
                     }
                 }
                 if (inShadow) {
+                    Color lightColor = light->getColor() * light->getIntensity();
+                    const float SHADOW_BOUNCE = 0.10f;
+                    result = result + (diffuseColor * lightColor * NdotL * SHADOW_BOUNCE);
                     continue;
                 }
 
@@ -98,6 +107,14 @@ class PhongIllumination : public Illumination {
             }
             result.clamp(); // make sure color values are within valid range
             return result;
+        }
+
+        Color illuminate(const IntersectData& data, const std::vector<std::unique_ptr<Light>>& lights,
+            const std::vector<std::unique_ptr<Object>>& objects,
+            const Material& material, const Vec3& view_dir, const Texture* texture = nullptr) const override {
+            Color localColor = computeLocalIllumination(data, lights, objects, material, view_dir, texture);
+            Color reflectedColor(0, 0, 0);
+            return combineWithReflection(localColor, material, reflectedColor);
         }
 };
 

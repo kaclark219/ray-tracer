@@ -24,6 +24,7 @@
 const int W = 800;
 const int H = 600;
 const float FOV_DEG = 90.0f;
+const int MAX_DEPTH = 3;
 
 // cuda error checking
 static inline void cudaCheck(cudaError_t err, const char* file, int line) {
@@ -34,11 +35,190 @@ static inline void cudaCheck(cudaError_t err, const char* file, int line) {
 }
 #define CUDA_CHECK(x) cudaCheck((x), __FILE__, __LINE__)
 
+#ifdef __CUDACC__
+    #define CUDA_DEVICE __device__
+#else
+    #define CUDA_DEVICE
+#endif
+
 // helper functions
 // change of basis from world to camera space
 static inline Point worldToCam(const Point& P, const Point& cam_pos, const Vec3& right, const Vec3& up, const Vec3& forward) {
     Vec3 v(P.getX() - cam_pos.getX(), P.getY() - cam_pos.getY(), P.getZ() - cam_pos.getZ());
     return Point(v.dot(right), v.dot(up), v.dot(forward));
+}
+
+CUDA_DEVICE Color traceRayGPU(
+    const Ray& primaryRay,
+    const SphereGPU* spheres,
+    int nSpheres,
+    const TriangleGPU* tris,
+    int nTris,
+    const Material* materials,
+    int numMaterials,
+    const LightData* lights,
+    int numLights,
+    const CheckerboardTextureData* floorTexture,
+    const Color& ambientLight,
+    const Color& background
+) {
+    Ray currentRay = primaryRay;
+    float pathWeight = 1.0f;
+    Color result(0, 0, 0);
+
+    for (int depth = 1; depth < MAX_DEPTH; ++depth) {
+        float nearest = 1e30f;
+        int hitType = -1; // 0 = sphere, 1 = triangle
+        int hitIndex = -1;
+
+        for (int s = 0; s < nSpheres; ++s) {
+            float t;
+            if (intersectSphereGPU(spheres[s], currentRay, t) && t < nearest) {
+                nearest = t;
+                hitType = 0;
+                hitIndex = s;
+            }
+        }
+        for (int tIdx = 0; tIdx < nTris; ++tIdx) {
+            float t;
+            if (intersectTriangleGPU(tris[tIdx], currentRay, t) && t < nearest) {
+                nearest = t;
+                hitType = 1;
+                hitIndex = tIdx;
+            }
+        }
+
+        if (hitType == -1) {
+            result = result + (background * pathWeight);
+            break;
+        }
+
+        Vec3 ray_dir = currentRay.getDirection();
+        Point hit_point(
+            currentRay.getOrigin().getX() + nearest * ray_dir.getX(),
+            currentRay.getOrigin().getY() + nearest * ray_dir.getY(),
+            currentRay.getOrigin().getZ() + nearest * ray_dir.getZ()
+        );
+
+        Vec3 normal;
+        int matIndex = 0;
+        if (hitType == 0) {
+            normal = Vec3(
+                hit_point.getX() - spheres[hitIndex].center.getX(),
+                hit_point.getY() - spheres[hitIndex].center.getY(),
+                hit_point.getZ() - spheres[hitIndex].center.getZ()
+            );
+            matIndex = spheres[hitIndex].materialIndex;
+        } else {
+            Vec3 edge1 = Vec3(
+                tris[hitIndex].points[1].getX() - tris[hitIndex].points[0].getX(),
+                tris[hitIndex].points[1].getY() - tris[hitIndex].points[0].getY(),
+                tris[hitIndex].points[1].getZ() - tris[hitIndex].points[0].getZ()
+            );
+            Vec3 edge2 = Vec3(
+                tris[hitIndex].points[2].getX() - tris[hitIndex].points[0].getX(),
+                tris[hitIndex].points[2].getY() - tris[hitIndex].points[0].getY(),
+                tris[hitIndex].points[2].getZ() - tris[hitIndex].points[0].getZ()
+            );
+            normal = edge1.cross(edge2);
+            matIndex = tris[hitIndex].materialIndex;
+        }
+        normal.normalize();
+
+        if (matIndex < 0 || matIndex >= numMaterials) {
+            matIndex = 0;
+        }
+
+        Vec3 view_dir = ray_dir * -1.0f;
+        view_dir.normalize();
+
+        Color localColor = materials[matIndex].getAmbient() * ambientLight;
+        const float EPS = 1e-4f;
+        for (int li = 0; li < numLights; ++li) {
+            Vec3 L = lights[li].position - hit_point;
+            float lightDist = L.length();
+            L.normalize();
+
+            float NdotL = normal.dot(L);
+            if (NdotL < 0.0f) NdotL = 0.0f;
+
+            Point shadow_origin(
+                hit_point.getX() + normal.getX() * EPS,
+                hit_point.getY() + normal.getY() * EPS,
+                hit_point.getZ() + normal.getZ() * EPS
+            );
+            Ray shadow_ray(shadow_origin, L);
+            bool inShadow = false;
+            for (int s = 0; s < nSpheres; ++s) {
+                float tShadow;
+                if (intersectSphereGPU(spheres[s], shadow_ray, tShadow) && tShadow > EPS && tShadow < lightDist) {
+                    inShadow = true;
+                    break;
+                }
+            }
+            if (!inShadow) {
+                for (int tIdx = 0; tIdx < nTris; ++tIdx) {
+                    float tShadow;
+                    if (intersectTriangleGPU(tris[tIdx], shadow_ray, tShadow) && tShadow > EPS && tShadow < lightDist) {
+                        inShadow = true;
+                        break;
+                    }
+                }
+            }
+            if (inShadow) {
+                Color lightColor = lights[li].color * lights[li].intensity;
+                Color diffuseColor = materials[matIndex].getDiffuse();
+                if (matIndex == 2 && floorTexture != nullptr) {
+                    diffuseColor = sampleCheckerboardGPU(*floorTexture, hit_point);
+                }
+                const float SHADOW_BOUNCE = 0.10f;
+                localColor = localColor + (diffuseColor * lightColor * NdotL * SHADOW_BOUNCE);
+                continue;
+            }
+
+            Vec3 R = (normal * (2.0f * NdotL)) - L;
+            R.normalize();
+            float RdotV = R.dot(view_dir);
+            if (RdotV < 0.0f) RdotV = 0.0f;
+            float specularFactor = (RdotV > 0.0f) ? powf(RdotV, materials[matIndex].getShininess()) : 0.0f;
+
+            Color lightColor = lights[li].color * lights[li].intensity;
+            Color diffuseColor = materials[matIndex].getDiffuse();
+            if (matIndex == 2 && floorTexture != nullptr) {
+                diffuseColor = sampleCheckerboardGPU(*floorTexture, hit_point);
+            }
+
+            localColor = localColor + (diffuseColor * lightColor * NdotL);
+            localColor = localColor + (materials[matIndex].getSpecular() * lightColor * specularFactor);
+        }
+
+        localColor.clamp();
+        result = result + (localColor * pathWeight);
+
+        float kr = materials[matIndex].getReflectivity();
+        if (kr <= 0.0f || depth + 1 >= MAX_DEPTH) {
+            break;
+        }
+
+        Vec3 I = ray_dir;
+        I.normalize();
+        float dotIN = I.dot(normal);
+        Vec3 reflect_dir = I - (normal * (2.0f * dotIN));
+        reflect_dir.normalize();
+
+        float offsetSign = (reflect_dir.dot(normal) >= 0.0f) ? 1.0f : -1.0f;
+        Point reflect_origin(
+            hit_point.getX() + normal.getX() * EPS * offsetSign,
+            hit_point.getY() + normal.getY() * EPS * offsetSign,
+            hit_point.getZ() + normal.getZ() * EPS * offsetSign
+        );
+
+        currentRay = Ray(reflect_origin, reflect_dir);
+        pathWeight *= kr;
+    }
+
+    result.clamp();
+    return result;
 }
 
 // one thread per pixel
@@ -63,126 +243,17 @@ __global__ void renderKernel(Color* fb, int w, int h, float aspect, float scale,
     Vec3 ray_dir(px, py, 1.0f);
     Ray ray(ray_origin, ray_dir);
 
-    float nearest = 1e30f;
-    int hitType = -1; // 0 = sphere, 1 = triangle
-    int hitIndex = -1;
-
-    for (int s = 0; s < nSpheres; ++s) {
-        float t;
-        if (intersectSphereGPU(spheres[s], ray, t) && t < nearest) {
-            nearest = t;
-            hitType = 0;
-            hitIndex = s;
-        }
-    }
-    for (int tIdx = 0; tIdx < nTris; ++tIdx) {
-        float t;
-        if (intersectTriangleGPU(tris[tIdx], ray, t) && t < nearest) {
-            nearest = t;
-            hitType = 1;
-            hitIndex = tIdx;
-        }
-    }
-
-    if (hitType == -1) {
-        fb[(size_t)j * (size_t)w + (size_t)i] = background;
-        return;
-    }
-
-    Point hit_point(
-        ray_origin.getX() + nearest * ray_dir.getX(),
-        ray_origin.getY() + nearest * ray_dir.getY(),
-        ray_origin.getZ() + nearest * ray_dir.getZ()
+    Color result = traceRayGPU(
+        ray,
+        spheres, nSpheres,
+        tris, nTris,
+        materials, numMaterials,
+        lights, numLights,
+        floorTexture,
+        ambientLight,
+        background
     );
 
-    Vec3 normal;
-    int matIndex = 0;
-    if (hitType == 0) {
-        normal = Vec3(
-            hit_point.getX() - spheres[hitIndex].center.getX(),
-            hit_point.getY() - spheres[hitIndex].center.getY(),
-            hit_point.getZ() - spheres[hitIndex].center.getZ()
-        );
-        matIndex = spheres[hitIndex].materialIndex;
-    } else {
-        Vec3 edge1 = Vec3(
-            tris[hitIndex].points[1].getX() - tris[hitIndex].points[0].getX(),
-            tris[hitIndex].points[1].getY() - tris[hitIndex].points[0].getY(),
-            tris[hitIndex].points[1].getZ() - tris[hitIndex].points[0].getZ()
-        );
-        Vec3 edge2 = Vec3(
-            tris[hitIndex].points[2].getX() - tris[hitIndex].points[0].getX(),
-            tris[hitIndex].points[2].getY() - tris[hitIndex].points[0].getY(),
-            tris[hitIndex].points[2].getZ() - tris[hitIndex].points[0].getZ()
-        );
-        normal = edge1.cross(edge2);
-        matIndex = tris[hitIndex].materialIndex;
-    }
-    normal.normalize();
-
-    Vec3 view_dir = ray_dir * -1.0f;
-    view_dir.normalize();
-
-    if (matIndex < 0 || matIndex >= numMaterials) {
-        matIndex = 0;
-    }
-
-    Color result = materials[matIndex].getAmbient() * ambientLight;
-    const float EPS = 1e-4f;
-    for (int li = 0; li < numLights; ++li) {
-        Vec3 L = lights[li].position - hit_point;
-        float lightDist = L.length();
-        L.normalize();
-
-        float NdotL = normal.dot(L);
-        if (NdotL < 0.0f) NdotL = 0.0f;
-
-        Point shadow_origin(
-            hit_point.getX() + normal.getX() * EPS,
-            hit_point.getY() + normal.getY() * EPS,
-            hit_point.getZ() + normal.getZ() * EPS
-        );
-        Ray shadow_ray(shadow_origin, L);
-        bool inShadow = false;
-        for (int s = 0; s < nSpheres; ++s) {
-            float tShadow;
-            if (intersectSphereGPU(spheres[s], shadow_ray, tShadow) && tShadow > EPS && tShadow < lightDist) {
-                inShadow = true;
-                break;
-            }
-        }
-        if (!inShadow) {
-            for (int tIdx = 0; tIdx < nTris; ++tIdx) {
-                float tShadow;
-                if (intersectTriangleGPU(tris[tIdx], shadow_ray, tShadow) && tShadow > EPS && tShadow < lightDist) {
-                    inShadow = true;
-                    break;
-                }
-            }
-        }
-        if (inShadow) {
-            continue;
-        }
-
-        Vec3 R = (normal * (2.0f * NdotL)) - L;
-        R.normalize();
-        float RdotV = R.dot(view_dir);
-        if (RdotV < 0.0f) RdotV = 0.0f;
-        float specularFactor = (RdotV > 0.0f) ? powf(RdotV, materials[matIndex].getShininess()) : 0.0f;
-
-        Color lightColor = lights[li].color * lights[li].intensity;
-        
-        // Sample texture for floor (matIndex == 2)
-        Color diffuseColor = materials[matIndex].getDiffuse();
-        if (matIndex == 2 && floorTexture != nullptr) {
-            diffuseColor = sampleCheckerboardGPU(*floorTexture, hit_point);
-        }
-        
-        result = result + (diffuseColor * lightColor * NdotL);
-        result = result + (materials[matIndex].getSpecular() * lightColor * specularFactor);
-    }
-
-    result.clamp();
     fb[(size_t)j * (size_t)w + (size_t)i] = result;
 }
 
@@ -240,18 +311,18 @@ int renderCUDA() {
 
     // materials
     Material hMats[3];
-    hMats[0] = Material(Color(20, 20, 0), Color(150, 150, 0), Color(30, 30, 30), 20.0f, 0.0f);
-    hMats[1] = Material(Color(40, 40, 40), Color(190, 190, 190), Color(130, 130, 130), 50.0f, 0.0f);
+    hMats[0] = Material::Matte();
+    hMats[1] = Material::Mirror();
     hMats[2] = Material(Color(20, 0, 0), Color(150, 0, 0), Color(10, 10, 10), 5.0f, 0.0f);
 
     // lights
     LightData hLights[1];
     hLights[0] = LightData(
-        worldToCam(Point(0.262f, 2.8f, -1.2f), cam_pos, right, up, forward),
+        worldToCam(Point(0.10f, 2.2f, -0.9f), cam_pos, right, up, forward),
         Color(255, 255, 255),
         0.9f
     );
-    Color ambientLight(15, 15, 15);
+    Color ambientLight(25, 25, 25);
 
     // create checkerboard texture for floor
     CheckerboardTextureData hCheckboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
@@ -261,12 +332,12 @@ int renderCUDA() {
     hSpheres[0].center = s1c_cam;
     hSpheres[0].radius = s1r;
     hSpheres[0].materialIndex = 0;
-    hSpheres[0].color = Color(255, 255, 0); // unused in shading
+    hSpheres[0].color = Color(255, 255, 255); // unused in shading
 
     hSpheres[1].center = s2c_cam;
     hSpheres[1].radius = s2r;
     hSpheres[1].materialIndex = 1;
-    hSpheres[1].color = Color(200, 200, 200); // unused in shading
+    hSpheres[1].color = Color(255, 255, 255); // unused in shading
 
     TriangleGPU hTris[2];
     hTris[0].points[0] = f00_cam;
@@ -344,3 +415,5 @@ int renderCUDA() {
 
     return 0;
 }
+
+#undef CUDA_DEVICE
