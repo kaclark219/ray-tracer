@@ -49,7 +49,7 @@ class PhongIllumination : public Illumination {
             // sample texture if available & get diffuse color
             Color diffuseColor = material.getDiffuse();
             if (texture != nullptr) {
-                Color textureSample = texture->sample(data.hit_point, Point(0, 0, 0), data.normal);
+                Color textureSample = texture->sample(data.hit_point, data.uv_coords, data.normal);
                 // use texture color directly
                 diffuseColor = textureSample;
             }
