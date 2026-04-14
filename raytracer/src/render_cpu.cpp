@@ -28,13 +28,17 @@ using std::make_unique;
 const int W = 800;
 const int H = 600;
 const float FOV_DEG = 90.0f;
-const int MAX_DEPTH = 3;
+const int MAX_DEPTH = 6;
 
 // helper functions
 // change of basis into camera space
 static inline Point worldToCam(const Point& P, const Point& cam_pos, const Vec3& right, const Vec3& up, const Vec3& forward) {
     Vec3 v(P.getX() - cam_pos.getX(), P.getY() - cam_pos.getY(), P.getZ() - cam_pos.getZ());
     return Point(v.dot(right), v.dot(up), v.dot(forward));
+}
+
+static inline Vec3 faceForward(const Vec3& A, const Vec3& B) {
+    return (A.dot(B) >= 0.0f) ? A : (A * -1.0f);
 }
 
 static Color traceRay(
@@ -46,7 +50,7 @@ static Color traceRay(
     const Color& backgroundColor
 ) {
     if (depth >= MAX_DEPTH) {
-        return Color(0, 0, 0);
+        return backgroundColor;
     }
 
     float nearest = std::numeric_limits<float>::infinity();
@@ -100,25 +104,93 @@ static Color traceRay(
     );
 
     float kr = obj_hit->getMaterial().getReflectivity();
-    if (kr > 0.0f && depth < MAX_DEPTH) {
+    float kt = obj_hit->getMaterial().getTransmission();
+    float ior = obj_hit->getMaterial().getIOR();
+    bool insideObject = normal.dot(ray_dir) > 0.0f;
+    float localWeight = (kt > 0.0f) ? 0.28f : std::max(0.22f, 1.0f - kr);
+    localColor = localColor * localWeight;
+    if (depth < MAX_DEPTH) {
+        // shared reflection & refraction calculations
         Vec3 I = ray_dir;
         I.normalize();
-        float dotIN = I.dot(normal);
 
+        float dotIN = I.dot(normal);
         Vec3 reflect_dir = I - (normal * (2.0f * dotIN));
         reflect_dir.normalize();
 
         const float EPS = 1e-4f;
-        float offsetSign = (reflect_dir.dot(normal) >= 0.0f) ? 1.0f : -1.0f;
-        Point reflect_origin(
-            hit_point.getX() + normal.getX() * EPS * offsetSign,
-            hit_point.getY() + normal.getY() * EPS * offsetSign,
-            hit_point.getZ() + normal.getZ() * EPS * offsetSign
-        );
+        auto spawnOffsetPoint = [&](const Vec3& dir) {
+            float offsetSign = (dir.dot(normal) >= 0.0f) ? 1.0f : -1.0f;
+            return Point(
+                hit_point.getX() + normal.getX() * EPS * offsetSign,
+                hit_point.getY() + normal.getY() * EPS * offsetSign,
+                hit_point.getZ() + normal.getZ() * EPS * offsetSign
+            );
+        };
 
-        Ray reflectedRay(reflect_origin, reflect_dir);
-        Color reflectedColor = traceRay(reflectedRay, depth + 1, phong, lights, objects, backgroundColor);
-        localColor = localColor + (reflectedColor * kr);
+        bool tracedReflection = false;
+        Color reflectedColor(0, 0, 0);
+        auto traceReflection = [&]() {
+            if (!tracedReflection) {
+                Ray reflectedRay(spawnOffsetPoint(reflect_dir), reflect_dir);
+                reflectedColor = traceRay(reflectedRay, depth + 1, phong, lights, objects, backgroundColor);
+                tracedReflection = true;
+            }
+            return reflectedColor;
+        };
+
+        if (kt > 0.0f) {
+            Vec3 orientedNormal = faceForward(normal, I * -1.0f);
+            float eta_i = insideObject ? ior : 1.0f;
+            float eta_t = insideObject ? 1.0f : ior;
+            float eta = eta_i / eta_t;
+            float cos_theta_i = -(I.dot(orientedNormal));
+            float baseReflectivity = (eta_i - eta_t) / (eta_i + eta_t);
+            baseReflectivity = baseReflectivity * baseReflectivity;
+            float fresnel = baseReflectivity + (1.0f - baseReflectivity) * std::pow(1.0f - cos_theta_i, 5.0f);
+            // t= 𝜂 !𝜂 "i + 𝜂 !𝜂 "cos 𝜃! − 1 − sin 𝜃" # n
+            // where: cos 𝜃! = −i . n 
+            //        sin 𝜃" # = 𝜂 !𝜂 "#(1 − cos 𝜃! # )
+            Vec3 refract_dir = I;
+            bool totalInternalReflection = false;
+
+            if (std::fabs(eta_i - eta_t) < 1e-6f) {
+                refract_dir.normalize();
+            }
+            else {
+                float sin2_theta_t = eta * eta * (1.0f - cos_theta_i * cos_theta_i);
+                if (sin2_theta_t > 1.0f) {
+                    totalInternalReflection = true;
+                }
+                else {
+                    float cos_theta_t = std::sqrt(1.0f - sin2_theta_t);
+                    Vec3 refract_parallel = I * eta;
+                    Vec3 refract_perpendicular = orientedNormal * (eta * cos_theta_i - cos_theta_t);
+                    refract_dir = Vec3(
+                        refract_parallel.getX() + refract_perpendicular.getX(),
+                        refract_parallel.getY() + refract_perpendicular.getY(),
+                        refract_parallel.getZ() + refract_perpendicular.getZ()
+                    );
+                    refract_dir.normalize();
+                }
+            }
+
+            if (!totalInternalReflection) {
+                Ray refractedRay(spawnOffsetPoint(refract_dir), refract_dir);
+                Color refractedColor = traceRay(refractedRay, depth + 1, phong, lights, objects, backgroundColor);
+                localColor = localColor + (refractedColor * kt);
+            }
+
+            // for total internal reflection .. rim highlight
+            float rimWeight = totalInternalReflection ? 0.10f : (fresnel * 0.04f);
+            if (rimWeight > 0.0f) {
+                Color rimColor = Color(255, 255, 255) * rimWeight;
+                localColor = localColor + rimColor;
+            }
+        }
+        else if (kr > 0.0f) {
+            localColor = localColor + (traceReflection() * kr);
+        }
     }
 
     localColor.clamp();
@@ -145,13 +217,13 @@ int renderCPU() {
     up.normalize();
 
     // create materials
-    Material matMatte = Material::Matte();     // back sphere
-    Material matMirror = Material::Mirror();   // front sphere
-    Material matRed(Color(20, 0, 0), Color(150, 0, 0), Color(10, 10, 10), 5.0f, 0.0f); // matte red floor
+    Material matGlass = Material::Glass(); // front sphere
+    Material matMirror = Material::Mirror(); // back sphere
+    Material matRed(Color(80, 10, 10), Color(150, 0, 0), Color(10, 10, 10), 5.0f, 0.0f); // matte red floor
 
     // create world and add lights
     World world;
-    world.setAmbientLight(Color(25, 25, 25)); // ambient light
+    world.setAmbientLight(Color(70, 70, 70)); // ambient light
     
     // light modified from specifications.txt to be more visible in render
     world.addLight(make_unique<PointLight>(
@@ -178,7 +250,7 @@ int renderCPU() {
     // floor as two triangles
     Point floorCenter(1.991213f, -0.257648f, -2.878398f);
     float fx = 6.148293f * 0.5f;
-    float fz = 5.984314f * 0.5f;
+    float fz = 8.200000f * 0.5f;
     float fy = floorCenter.getY();
     Point f00_world(floorCenter.getX() - fx, fy, floorCenter.getZ() - fz);
     Point f10_world(floorCenter.getX() + fx, fy, floorCenter.getZ() - fz);
@@ -191,12 +263,12 @@ int renderCPU() {
     // transform centers to camera space
     Point s1c_cam = worldToCam(s1c_world, cam_pos, right, up, forward);
     auto sphere1 = make_unique<Sphere>(s1c_cam, s1r);
-    sphere1->setMaterial(matMatte);
+    sphere1->setMaterial(matMirror);
     scene_cam.push_back(std::move(sphere1));
 
     Point s2c_cam = worldToCam(s2c_world, cam_pos, right, up, forward);
     auto sphere2 = make_unique<Sphere>(s2c_cam, s2r);
-    sphere2->setMaterial(matMirror);
+    sphere2->setMaterial(matGlass);
     scene_cam.push_back(std::move(sphere2));
 
     // transform vertices to camera space

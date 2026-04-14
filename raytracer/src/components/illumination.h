@@ -72,16 +72,21 @@ class PhongIllumination : public Illumination {
                 );
                 Ray shadow_ray(shadow_origin, L);
                 bool inShadow = false;
+                float shadowTransmission = 1.0f;
                 for (const auto& obj : objects) {
                     float tShadow;
                     if (obj->intersect(shadow_ray, tShadow) && tShadow > EPS && tShadow < lightDist) {
-                        inShadow = true;
-                        break;
+                        float kt = obj->getMaterial().getTransmission();
+                        if (kt <= 0.0f) {
+                            inShadow = true;
+                            break;
+                        }
+                        shadowTransmission *= (1.0f - (0.35f * kt));
                     }
                 }
                 if (inShadow) {
                     Color lightColor = light->getColor() * light->getIntensity();
-                    const float SHADOW_BOUNCE = 0.10f;
+                    const float SHADOW_BOUNCE = 0.30f;
                     result = result + (diffuseColor * lightColor * NdotL * SHADOW_BOUNCE);
                     continue;
                 }
@@ -90,7 +95,7 @@ class PhongIllumination : public Illumination {
                 R.normalize();
                 float RdotV = std::max(R.dot(view_dir), 0.0f);
                 float specularFactor = std::pow(RdotV, material.getShininess());
-                Color lightColor = light->getColor() * light->getIntensity();
+                Color lightColor = light->getColor() * (light->getIntensity() * shadowTransmission);
                 result = result + (diffuseColor * lightColor * NdotL); // diffuse contribution
                 result = result + (material.getSpecular() * lightColor * specularFactor);
             }
