@@ -2,6 +2,9 @@
 **A fully custom-built ray tracing system in C++ & CUDA.** <br /> <br />
 Created for CSCI-711 (Global Illumination) at RIT spring 2026, this project explores the ray tracing pipeline for lighting and rendering techniques.
 
+### Full scene rendering including tone reproduction
+![Final scene rendering including tone reproduction](high_ward.png) 
+
 ## Table of Contents
 - [Project Overview](#project-overview)
 - [Dev Setup](#dev-setup)
