@@ -236,7 +236,7 @@ int renderCPU() {
     world.addLight(make_unique<PointLight>(
         worldToCam(Point(0.10f, 2.2f, -0.9f), cam_pos, right, up, forward), // light position in camera space
         Color(255, 255, 255), // white light
-        0.2f // intensity
+        0.75f // intensity
     ));
 
     // create illumination model

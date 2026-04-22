@@ -43,8 +43,8 @@ bool Image::applyToneRepoduction(const std::string &filename) const {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const Color &c = pixels[y * width + x];
-            // Color toneMappedColor = wardToneReproduction(c, L_wa);
-            Color toneMappedColor = reinhardToneReproduction(c, L_wa);
+            Color toneMappedColor = wardToneReproduction(c, L_wa);
+            // Color toneMappedColor = reinhardToneReproduction(c, L_wa);
             unsigned char rgb[3] = { clampUnitToU8(toneMappedColor.r), clampUnitToU8(toneMappedColor.g), clampUnitToU8(toneMappedColor.b) };
             ofs.write(reinterpret_cast<char *>(rgb), 3);
         }
