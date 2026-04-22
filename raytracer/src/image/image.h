@@ -34,6 +34,8 @@ class Image {
         }
 
         bool writePPM(const std::string &filename) const;
+
+        bool applyToneRepoduction(const std::string &filename) const;
 };
 
 #endif //RAYTRACER_IMAGE_H

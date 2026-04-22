@@ -52,6 +52,15 @@ CUDA_DEVICE Vec3 faceForwardGPU(const Vec3& A, const Vec3& B) {
     return (A.dot(B) >= 0.0f) ? A : (A * -1.0f);
 }
 
+CUDA_DEVICE Color backgroundRadianceGPU(const Vec3& ray_dir) {
+    Vec3 dir = ray_dir;
+    dir.normalize();
+    float t = 0.5f * (dir.getY() + 1.0f);
+    Color horizon(18.0f, 24.0f, 30.0f);
+    Color zenith(70.0f, 95.0f, 130.0f);
+    return (horizon * (1.0f - t)) + (zenith * t);
+}
+
 CUDA_DEVICE Color traceRayGPU(
     const Ray& ray,
     int depth,
@@ -64,11 +73,12 @@ CUDA_DEVICE Color traceRayGPU(
     const LightData* lights,
     int numLights,
     const CheckerboardTextureData* floorTexture,
-    const Color& ambientLight,
-    const Color& background
+    const Color& ambientLight
 ) {
+    Vec3 ray_dir = ray.getDirection();
+
     if (depth >= MAX_DEPTH) {
-        return background;
+        return backgroundRadianceGPU(ray_dir);
     }
 
     float nearest = 1e30f;
@@ -93,10 +103,8 @@ CUDA_DEVICE Color traceRayGPU(
     }
 
     if (hitType == -1) {
-        return background;
+        return backgroundRadianceGPU(ray_dir);
     }
-
-    Vec3 ray_dir = ray.getDirection();
     Point hit_point(
         ray.getOrigin().getX() + nearest * ray_dir.getX(),
         ray.getOrigin().getY() + nearest * ray_dir.getY(),
@@ -261,7 +269,7 @@ CUDA_DEVICE Color traceRayGPU(
             Color refractedColor = traceRayGPU(
                 refractedRay, depth + 1,
                 spheres, nSpheres, tris, nTris, materials, numMaterials,
-                lights, numLights, floorTexture, ambientLight, background
+                lights, numLights, floorTexture, ambientLight
             );
             localColor = localColor + (refractedColor * kt);
         }
@@ -275,12 +283,11 @@ CUDA_DEVICE Color traceRayGPU(
         Color reflectedColor = traceRayGPU(
             reflectedRay, depth + 1,
             spheres, nSpheres, tris, nTris, materials, numMaterials,
-            lights, numLights, floorTexture, ambientLight, background
+            lights, numLights, floorTexture, ambientLight
         );
         localColor = localColor + (reflectedColor * kr);
     }
 
-    localColor.clamp();
     return localColor;
 }
 
@@ -291,7 +298,7 @@ __global__ void renderKernel(Color* fb, int w, int h, float aspect, float scale,
     const Material* materials, int numMaterials,
     const LightData* lights, int numLights,
     const CheckerboardTextureData* floorTexture,
-    Color ambientLight, Color background) {
+    Color ambientLight) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= w || j >= h) return;
@@ -313,8 +320,7 @@ __global__ void renderKernel(Color* fb, int w, int h, float aspect, float scale,
         materials, numMaterials,
         lights, numLights,
         floorTexture,
-        ambientLight,
-        background
+        ambientLight
     );
 
     fb[(size_t)j * (size_t)w + (size_t)i] = result;
@@ -385,7 +391,7 @@ int renderCUDA() {
         Color(255, 255, 255),
         0.9f
     );
-    Color ambientLight(70, 70, 70);
+    Color ambientLight(0, 0, 0);
 
     // create checkerboard texture for floor
     CheckerboardTextureData hCheckboard(Color(255, 0, 0), Color(255, 255, 0), 1.5f);
@@ -442,13 +448,12 @@ int renderCUDA() {
     dim3 block(16, 16);
     dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
 
-    Color bg(135, 206, 235); // sky blue background
     renderKernel<<<grid, block>>>(dFB, W, H, aspect, scale,
         dSpheres, 2, dTris, 2,
         dMats, 3,
         dLights, 1,
         dCheckboard,
-        ambientLight, bg);
+        ambientLight);
 
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -466,7 +471,7 @@ int renderCUDA() {
     CUDA_CHECK(cudaFree(dCheckboard));
 
     // write to image class
-    Image img(W, H, bg);
+    Image img(W, H, Color(0, 0, 0));
     for (int j = 0; j < H; ++j) {
         for (int i = 0; i < W; ++i) {
             img.setPixel(i, j, hFB[(size_t)j * (size_t)W + (size_t)i]);

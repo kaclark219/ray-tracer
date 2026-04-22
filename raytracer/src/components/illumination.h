@@ -34,7 +34,6 @@ class PhongIllumination : public Illumination {
 
         Color combineWithReflection(const Color& localColor, const Material& material, const Color& reflectedColor) const {
             Color result = localColor + (reflectedColor * material.getReflectivity());
-            result.clamp();
             return result;
         }
     
@@ -99,7 +98,6 @@ class PhongIllumination : public Illumination {
                 result = result + (diffuseColor * lightColor * NdotL); // diffuse contribution
                 result = result + (material.getSpecular() * lightColor * specularFactor);
             }
-            result.clamp(); // make sure color values are within valid range
             return result;
         }
 
@@ -157,7 +155,6 @@ CUDA_CALLABLE inline Color computePhongIllumination(
         result = result + (diffuseColor * lightColor * NdotL);
         result = result + (material.getSpecular() * lightColor * specularFactor);
     }
-    result.clamp();
     return result;
 }
 
@@ -199,7 +196,6 @@ CUDA_CALLABLE inline Color computePhongIlluminationWithTexture(
         result = result + (diffuseColor * lightColor * NdotL);
         result = result + (material.getSpecular() * lightColor * specularFactor);
     }
-    result.clamp();
     return result;
 }
 

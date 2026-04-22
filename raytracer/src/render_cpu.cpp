@@ -41,16 +41,26 @@ static inline Vec3 faceForward(const Vec3& A, const Vec3& B) {
     return (A.dot(B) >= 0.0f) ? A : (A * -1.0f);
 }
 
+static inline Color backgroundRadiance(const Vec3& ray_dir) {
+    Vec3 dir = ray_dir;
+    dir.normalize();
+    float t = 0.5f * (dir.getY() + 1.0f);
+    Color horizon(18.0f, 24.0f, 30.0f);
+    Color zenith(70.0f, 95.0f, 130.0f);
+    return (horizon * (1.0f - t)) + (zenith * t);
+}
+
 static Color traceRay(
     const Ray& ray,
     int depth,
     const PhongIllumination& phong,
     const std::vector<std::unique_ptr<Light>>& lights,
-    const std::vector<std::unique_ptr<Object>>& objects,
-    const Color& backgroundColor
+    const std::vector<std::unique_ptr<Object>>& objects
 ) {
+    Vec3 ray_dir = ray.getDirection();
+
     if (depth >= MAX_DEPTH) {
-        return backgroundColor;
+        return backgroundRadiance(ray_dir);
     }
 
     float nearest = std::numeric_limits<float>::infinity();
@@ -64,10 +74,8 @@ static Color traceRay(
     }
 
     if (!obj_hit) {
-        return backgroundColor;
+        return backgroundRadiance(ray_dir);
     }
-
-    Vec3 ray_dir = ray.getDirection();
 
     Point hit_point(
         ray.getOrigin().getX() + nearest * ray_dir.getX(),
@@ -133,7 +141,7 @@ static Color traceRay(
         auto traceReflection = [&]() {
             if (!tracedReflection) {
                 Ray reflectedRay(spawnOffsetPoint(reflect_dir), reflect_dir);
-                reflectedColor = traceRay(reflectedRay, depth + 1, phong, lights, objects, backgroundColor);
+                reflectedColor = traceRay(reflectedRay, depth + 1, phong, lights, objects);
                 tracedReflection = true;
             }
             return reflectedColor;
@@ -177,7 +185,7 @@ static Color traceRay(
 
             if (!totalInternalReflection) {
                 Ray refractedRay(spawnOffsetPoint(refract_dir), refract_dir);
-                Color refractedColor = traceRay(refractedRay, depth + 1, phong, lights, objects, backgroundColor);
+                Color refractedColor = traceRay(refractedRay, depth + 1, phong, lights, objects);
                 localColor = localColor + (refractedColor * kt);
             }
 
@@ -193,7 +201,6 @@ static Color traceRay(
         }
     }
 
-    localColor.clamp();
     return localColor;
 }
 
@@ -223,13 +230,13 @@ int renderCPU() {
 
     // create world and add lights
     World world;
-    world.setAmbientLight(Color(70, 70, 70)); // ambient light
+    world.setAmbientLight(Color(0, 0, 0)); // no constant ambient term
     
     // light modified from specifications.txt to be more visible in render
     world.addLight(make_unique<PointLight>(
         worldToCam(Point(0.10f, 2.2f, -0.9f), cam_pos, right, up, forward), // light position in camera space
         Color(255, 255, 255), // white light
-        0.9f // intensity
+        0.2f // intensity
     ));
 
     // create illumination model
@@ -286,8 +293,8 @@ int renderCPU() {
     t2->setTexture(&checkerboard);
     scene_cam.push_back(std::move(t2));
 
-    // prep img with sky blue background
-    Image img(W, H, Color(135, 206, 235));
+    // prep image; every pixel will be filled by traced radiance
+    Image img(W, H, Color(0, 0, 0));
 
     // ray trace in camera coords
     float scale = std::tan(fov * 0.5f);
@@ -315,7 +322,7 @@ int renderCPU() {
 
                     Vec3 ray_dir(px, py, 1.0f);
                     Ray ray(ray_origin, ray_dir);
-                    Color sampleColor = traceRay(ray, 1, phong, world.getLights(), scene_cam, Color(135, 206, 235));
+                    Color sampleColor = traceRay(ray, 1, phong, world.getLights(), scene_cam);
 
                     accumR += sampleColor.r;
                     accumG += sampleColor.g;
@@ -325,16 +332,19 @@ int renderCPU() {
 
             float invSamples = 1.0f / (float)SAMPLES_PER_PIXEL;
             Color finalColor(
-                (int)(accumR * invSamples),
-                (int)(accumG * invSamples),
-                (int)(accumB * invSamples)
+                accumR * invSamples,
+                accumG * invSamples,
+                accumB * invSamples
             );
-            finalColor.clamp();
             img.setPixel(i, j, finalColor);
         }
     }
 
-    std::string out = "output_img.ppm";
-    if (!img.writePPM(out)) return 1;
+    // std::string out = "output_img.ppm";
+    // if (!img.writePPM(out)) return 1;
+    // return 0;
+
+    std::string toneMappedOut = "output_img_tonemapped.ppm";
+    if (!img.applyToneRepoduction(toneMappedOut)) return 1;
     return 0;
 }
